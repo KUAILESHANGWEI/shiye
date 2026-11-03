@@ -1,6 +1,7 @@
 import Cocoa
 import WebKit
 import UniformTypeIdentifiers
+import LinkPresentation
 
 func libraryURL() -> URL {
     let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -8,6 +9,38 @@ func libraryURL() -> URL {
 }
 final class NativeBridge: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "fetchLinkMetadata" {
+            guard let body = message.body as? [String: String], let id = body["id"], let raw = body["url"], let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+            if let host = url.host?.lowercased(), host == "youtu.be" || host == "youtube.com" || host.hasSuffix(".youtube.com") {
+                var components = URLComponents(string: "https://www.youtube.com/oembed")!
+                components.queryItems = [URLQueryItem(name: "format", value: "json"), URLQueryItem(name: "url", value: raw)]
+                if let endpoint = components.url {
+                    URLSession.shared.dataTask(with: endpoint) { data, _, _ in
+                        guard let data = data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+                        let result = ["id": id, "title": object["title"] as? String ?? "", "author": object["author_name"] as? String ?? "", "image": object["thumbnail_url"] as? String ?? ""]
+                        guard let encoded = try? JSONSerialization.data(withJSONObject: result), let json = String(data: encoded, encoding: .utf8) else { return }
+                        DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuOembedResult(\(json))") }
+                    }.resume()
+                }
+            }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                guard let data = data, data.count <= 2_000_000, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let html = String(data: data, encoding: .utf8) else { return }
+                let result = ["id": id, "html": String(html.prefix(500_000))]
+                guard let encoded = try? JSONSerialization.data(withJSONObject: result), let json = String(data: encoded, encoding: .utf8) else { return }
+                DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuHTMLResult(\(json))") }
+            }.resume()
+            let provider = LPMetadataProvider()
+            provider.timeout = 15
+            provider.startFetchingMetadata(for: url) { metadata, error in
+                let result: [String: String] = ["id": id, "title": metadata?.title ?? "", "error": error == nil ? "" : "无法读取页面信息，可以手动编辑标题"]
+                guard let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuMetadataResult(\(json))") }
+                _ = provider
+            }
+            return
+        }
         if message.name == "persistLibrary" {
             guard let value = message.body as? String, let data = value.data(using: .utf8) else { return }
             do { let url = libraryURL(); try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url, options: .atomic) }
@@ -88,7 +121,7 @@ let config = WKWebViewConfiguration(); config.websiteDataStore = .default()
 if let data = try? Data(contentsOf: libraryURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyuNativeLibrary = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
 }
-let bridge = NativeBridge(); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+let bridge = NativeBridge(); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
 let web = WKWebView(frame: .zero, configuration: config)
 let ui = UIDelegate(); web.uiDelegate = ui
 let delegate = WindowDelegate()
