@@ -23,6 +23,22 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                     }.resume()
                 }
             }
+            if let host = url.host?.lowercased(), ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"].contains(host) {
+                let parts = url.path.split(separator: "/").map(String.init)
+                if parts.count >= 3, parts[1] == "status", !parts[2].isEmpty, parts[2].allSatisfy({ $0.isNumber }) {
+                    var components = URLComponents(string: "https://publish.twitter.com/oembed")!
+                    components.queryItems = [URLQueryItem(name: "omit_script", value: "true"), URLQueryItem(name: "url", value: "https://x.com/\(parts[0])/status/\(parts[2])")]
+                    if let endpoint = components.url {
+                        var embedRequest = URLRequest(url: endpoint); embedRequest.timeoutInterval = 15
+                        URLSession.shared.dataTask(with: embedRequest) { data, _, _ in
+                            guard let data = data, data.count <= 1_000_000, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let html = object["html"] as? String else { return }
+                            let result = ["id": id, "html": html, "author": object["author_name"] as? String ?? ""]
+                            guard let encoded = try? JSONSerialization.data(withJSONObject: result), let json = String(data: encoded, encoding: .utf8) else { return }
+                            DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuXEmbedResult(\(json))") }
+                        }.resume()
+                    }
+                }
+            }
             var request = URLRequest(url: url)
             request.timeoutInterval = 15
             URLSession.shared.dataTask(with: request) { data, response, _ in

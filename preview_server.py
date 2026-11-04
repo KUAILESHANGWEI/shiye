@@ -14,6 +14,18 @@ class Metadata(html.parser.HTMLParser):
     def handle_data(self, data):
         if self.in_title: self.title+=data
 
+class EmbedText(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__(); self.inside=False; self.text=[]
+    def handle_starttag(self, tag, attrs):
+        if tag=='p': self.inside=True
+        if tag=='br' and self.inside: self.text.append(' ')
+    def handle_endtag(self, tag):
+        if tag=='p': self.inside=False
+    def handle_data(self, data):
+        if self.inside: self.text.append(data)
+
+
 def public_url(url):
     u=urllib.parse.urlsplit(url)
     if u.scheme not in ('http','https') or not u.hostname or u.username or u.password: raise ValueError('无效链接')
@@ -37,6 +49,15 @@ def extract(url):
         try:
             d=json.loads(fetch('https://www.youtube.com/oembed?format=json&url='+urllib.parse.quote(url,safe='')))
             result.update(title=d.get('title',''),author=d.get('author_name',''),image=d.get('thumbnail_url',''))
+        except Exception: pass
+    if host in ('x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com') and re.search(r'/status/\d+',u.path):
+        try:
+            post_path=re.match(r'^/(?:[^/]+)/status/\d+',u.path)
+            canonical='https://x.com'+post_path.group(0) if post_path else url
+            d=json.loads(fetch('https://publish.twitter.com/oembed?omit_script=true&url='+urllib.parse.quote(canonical,safe='')))
+            parser=EmbedText(); parser.feed(d.get('html',''))
+            result['title']=re.sub(r'\s+',' ',''.join(parser.text)).strip()
+            result['author']=d.get('author_name','')
         except Exception: pass
     try:
         p=Metadata(); p.feed(fetch(url)); m=p.meta
