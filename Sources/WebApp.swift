@@ -7,6 +7,7 @@ func libraryURL() -> URL {
     let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     return root.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.shiyu.preview", isDirectory: true).appendingPathComponent("bookmarks.json")
 }
+func notesURL() -> URL { libraryURL().deletingLastPathComponent().appendingPathComponent("notes.json") }
 final class NativeBridge: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "fetchLinkMetadata" {
@@ -55,6 +56,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuMetadataResult(\(json))") }
                 _ = provider
             }
+            return
+        }
+        if message.name == "persistNotes" {
+            guard let value = message.body as? String, let data = value.data(using: .utf8) else { return }
+            do { let url = notesURL(); try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url, options: .atomic) }
+            catch { let alert = NSAlert(error: error); alert.messageText = "保存笔记失败"; alert.runModal() }
             return
         }
         if message.name == "persistLibrary" {
@@ -137,7 +144,10 @@ let config = WKWebViewConfiguration(); config.websiteDataStore = .default()
 if let data = try? Data(contentsOf: libraryURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyuNativeLibrary = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
 }
-let bridge = NativeBridge(); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+if let data = try? Data(contentsOf: notesURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
+    config.userContentController.addUserScript(WKUserScript(source: "window.shiyeNativeNotes = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+}
+let bridge = NativeBridge(); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "persistNotes"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
 let web = WKWebView(frame: .zero, configuration: config)
 let ui = UIDelegate(); web.uiDelegate = ui
 let delegate = WindowDelegate()
