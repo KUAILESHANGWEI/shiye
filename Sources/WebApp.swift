@@ -2,6 +2,7 @@ import Cocoa
 import WebKit
 import UniformTypeIdentifiers
 import LinkPresentation
+import Quartz
 
 func libraryURL() -> URL {
     let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -101,6 +102,70 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         }
     }
 }
+final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLPreviewPanelDataSource {
+    private var previewURL: URL?
+    private let store = FileCollectionStore(url: libraryURL().deletingLastPathComponent().appendingPathComponent("files.json"))
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let body = message.body as? [String: Any], let action = body["action"] as? String else {
+            replyHandler(nil, "文件请求格式不正确")
+            return
+        }
+        do {
+            switch action {
+            case "getAll":
+                replyHandler(try store.read(), nil)
+            case "merge":
+                guard let records = body["value"] as? [[String: Any]] else { throw invalidRequest() }
+                _ = try store.merge(records)
+                replyHandler(true, nil)
+            case "delete":
+                guard let id = body["value"] as? String else { throw invalidRequest() }
+                try store.delete(id: id)
+                replyHandler(true, nil)
+            case "preview":
+                guard let record = body["value"] as? [String: Any] else { throw invalidRequest() }
+                try store.validate(record)
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("shiye-preview-" + UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let name = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? "文件"
+                let destination = directory.appendingPathComponent(name)
+                guard let encoded = record["data"] as? String, let data = Data(base64Encoded: encoded) else { throw invalidRequest() }
+                try data.write(to: destination, options: .atomic)
+                previewURL = destination
+                let panel = QLPreviewPanel.shared()!
+                panel.dataSource = self
+                panel.reloadData()
+                panel.makeKeyAndOrderFront(nil)
+                replyHandler(true, nil)
+            case "export":
+                guard let record = body["value"] as? [String: Any] else { throw invalidRequest() }
+                try store.validate(record)
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? "文件"
+                if panel.runModal() == .OK, let destination = panel.url,
+                   let encoded = record["data"] as? String, let data = Data(base64Encoded: encoded) {
+                    try data.write(to: destination, options: .atomic)
+                }
+                replyHandler(true, nil)
+            default:
+                throw invalidRequest()
+            }
+        } catch {
+            replyHandler(nil, error.localizedDescription)
+        }
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURL == nil ? 0 : 1 }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewURL as NSURL?
+    }
+
+    private func invalidRequest() -> NSError {
+        NSError(domain: "ShiyeFiles", code: 2, userInfo: [NSLocalizedDescriptionKey: "文件请求格式不正确"])
+    }
+}
 final class WindowDelegate: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { NSApplication.shared.terminate(nil) }
 }
@@ -115,7 +180,7 @@ final class UIDelegate: NSObject, WKUIDelegate {
         let alert = NSAlert(); alert.messageText = prompt; let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24)); field.stringValue = defaultText ?? ""; alert.accessoryView = field; alert.addButton(withTitle: "确定"); alert.addButton(withTitle: "取消"); alert.window.initialFirstResponder = field; completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = false; panel.canChooseDirectories = false; panel.allowedContentTypes = [.json]
+        let panel = NSOpenPanel(); panel.allowsMultipleSelection = parameters.allowsMultipleSelection; panel.canChooseDirectories = false
         completionHandler(panel.runModal() == .OK ? panel.urls : nil)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -148,6 +213,8 @@ if let data = try? Data(contentsOf: notesURL()), let value = String(data: data, 
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyeNativeNotes = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
 }
 let bridge = NativeBridge(); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "persistNotes"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+let fileBridge = FileCollectionBridge()
+config.userContentController.addScriptMessageHandler(fileBridge, contentWorld: .page, name: "fileCollection")
 let web = WKWebView(frame: .zero, configuration: config)
 let ui = UIDelegate(); web.uiDelegate = ui
 let delegate = WindowDelegate()
