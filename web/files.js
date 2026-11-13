@@ -38,7 +38,7 @@ function encodeFile(item) {
 }
 
 function decodeFiles(records) {
-    if (!Array.isArray(records)) throw Error('文件收藏数据格式不正确');
+    if (!Array.isArray(records)) throw Error(t("文件收藏数据格式不正确"));
     const ids = new Set();
     return records.map(record => {
         if (!record || typeof record.id !== 'string' ||
@@ -48,11 +48,11 @@ function decodeFiles(records) {
             typeof record.createdAt !== 'string' || typeof record.data !== 'string' ||
             !Number.isInteger(record.rating) || record.rating < 0 || record.rating > 3 ||
             !Number.isSafeInteger(record.size) || record.size < 0) {
-            throw Error('文件收藏数据不完整');
+            throw Error(t("文件收藏数据不完整"));
         }
         ids.add(record.id);
         const bytes = Uint8Array.from(atob(record.data), character => character.charCodeAt(0));
-        if (bytes.length !== record.size) throw Error('文件内容已损坏');
+        if (bytes.length !== record.size) throw Error(t("文件内容已损坏"));
         return {
             id: record.id, name: record.name, type: record.type, size: record.size,
             note: record.note, rating: record.rating, createdAt: record.createdAt,
@@ -86,7 +86,7 @@ async function fileStore(action, value) {
         }
         transaction.oncomplete = () => resolve(request?.result);
         transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error || Error('文件存储已取消'));
+        transaction.onabort = () => reject(transaction.error || Error(t("文件存储已取消")));
     });
 }
 
@@ -100,7 +100,7 @@ async function loadFileItems() {
         fileItems = await fileStore('getAll');
         if (filesMode) renderFiles();
     } catch {
-        $('filesStatus').textContent = '无法打开文件资料库，请检查存储权限。';
+        $('filesStatus').textContent = t("无法打开文件资料库，请检查存储权限。");
     }
 }
 
@@ -115,10 +115,10 @@ async function importFiles(list) {
         }));
         await fileStore('merge', items);
         await loadFileItems();
-        $('filesStatus').textContent = `已收藏 ${items.length} 个文件。` +
-            (nativeFileCollection() ? '文件已复制到拾页资料库。' : '文件保存在当前浏览器中。');
+        $('filesStatus').textContent = `${t("已收藏")} ${items.length} ${t("个文件。")}` +
+            (nativeFileCollection() ? t("文件已复制到拾页资料库。") : t("文件保存在当前浏览器中。"));
     } catch {
-        $('filesStatus').textContent = '文件未能保存，请检查可用空间或存储权限后重试。';
+        $('filesStatus').textContent = t("文件未能保存，请检查可用空间或存储权限后重试。");
     } finally {
         fileImporting = false;
         $('selectFiles').disabled = false;
@@ -139,7 +139,7 @@ async function exportFile(file) {
         anchor.click();
         setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch {
-        alert('文件导出失败，请重试。');
+        alert(t("文件导出失败，请重试。"));
     }
 }
 
@@ -182,8 +182,8 @@ function renderFiles() {
     $('filesView').classList.add('active');
     document.querySelector('.toolbar').style.display = 'none';
     $('addSite').style.display = 'none';
-    $('title').textContent = '文件收藏';
-    $('subtitle').textContent = `${fileItems.length} 个文件 · 收好你的图片与资料`;
+    $('title').textContent = t("文件收藏");
+    $('subtitle').textContent = `${fileItems.length} ${t("个文件 · 收好你的图片与资料")}`;
 
     const query = $('filesSearch').value.trim().toLowerCase();
     const kind = $('filesType').value;
@@ -214,18 +214,18 @@ function renderFiles() {
             ${cover}
             <div class="card-top">
                 <div class="file-title">${esc(file.name)}</div>
-                <button type="button" class="menu file-delete" data-id="${esc(file.id)}" aria-label="删除文件">×</button>
+                <button type="button" class="menu file-delete" data-id="${esc(file.id)}" aria-label="${t("删除文件")}">×</button>
             </div>
-            <div class="file-meta">${fileSize(file.size)} · ${esc(new Date(file.createdAt).toLocaleDateString('zh-CN'))}${file.rating ? ' · ' + esc('★'.repeat(file.rating)) : ''}</div>
+            <div class="file-meta">${fileSize(file.size)} · ${esc(new Date(file.createdAt).toLocaleDateString(ShiyeI18n.locale()))}${file.rating ? ' · ' + esc('★'.repeat(file.rating)) : ''}</div>
             ${file.note ? `<p class="file-note">${esc(file.note)}</p>` : ''}
             <div class="card-footer">
-                <button class="subtle file-preview" data-id="${esc(file.id)}">预览</button>
-                <button class="subtle file-edit" data-id="${esc(file.id)}">备注</button>
-                <button class="subtle file-rate" data-id="${esc(file.id)}">评级</button>
-                <button class="subtle file-export" data-id="${esc(file.id)}">导出</button>
+                <button class="subtle file-preview" data-id="${esc(file.id)}">${t("预览")}</button>
+                <button class="subtle file-edit" data-id="${esc(file.id)}">${t("备注")}</button>
+                <button class="subtle file-rate" data-id="${esc(file.id)}">${t("评级")}</button>
+                <button class="subtle file-export" data-id="${esc(file.id)}">${t("导出")}</button>
             </div>
         </article>`;
-    }).join('') : '<div class="empty"><strong>还没有匹配的文件</strong>选择文件或拖入图片、文档，开始收藏</div>';
+    }).join('') : ("<div class=\"empty\"><strong>" + t("还没有匹配的文件") + "</strong>" + t("选择文件或拖入图片、文档，开始收藏") + "</div>");
 
     for (const button of $('fileCards').querySelectorAll('[data-id]')) {
         button.onclick = async () => {
@@ -238,18 +238,18 @@ function renderFiles() {
             } else if (button.classList.contains('file-edit') || button.classList.contains('file-rate')) {
                 const editingRating = button.classList.contains('file-rate');
                 $('fileEditForm').dataset.id = file.id;
-                $('fileEditHeading').textContent = editingRating ? '文件评级' : '文件备注';
+                $('fileEditHeading').textContent = editingRating ? t("文件评级") : t("文件备注");
                 $('fileNoteField').classList.toggle('hidden', editingRating);
                 $('fileRatingField').classList.toggle('hidden', !editingRating);
                 $('fileNoteInput').value = file.note;
                 $('fileRatingInput').value = String(file.rating);
                 $('fileEditDialog').showModal();
-            } else if (button.classList.contains('file-delete') && confirm(`删除收藏中的“${file.name}”？原始文件不受影响。`)) {
+            } else if (button.classList.contains('file-delete') && confirm(ShiyeI18n.format("删除收藏中的“{name}”？原始文件不受影响。", {name: file.name}))) {
                 try {
                     await fileStore('delete', file.id);
                     await loadFileItems();
                 } catch {
-                    alert('删除失败，请重试。');
+                    alert(t("删除失败，请重试。"));
                 }
             }
         };
@@ -261,7 +261,7 @@ async function previewFile(file) {
         try {
             await nativeFileCollection().postMessage({action: 'preview', value: await encodeFile(file)});
         } catch {
-            alert('文件预览失败，可导出后打开。');
+            alert(t("文件预览失败，可导出后打开。"));
         }
         return;
     }
@@ -289,7 +289,7 @@ async function previewFile(file) {
         if ($('filePreviewDialog').open && $('filePreviewDialog').dataset.id === file.id) box.append(text);
     } else {
         const message = document.createElement('p');
-        message.textContent = '此文件暂不支持网页预览，可导出后用相应应用打开。';
+        message.textContent = t("此文件暂不支持网页预览，可导出后用相应应用打开。");
         box.append(message);
     }
     $('previewFileExport').onclick = () => exportFile(file);
@@ -297,6 +297,7 @@ async function previewFile(file) {
 
 const originalRenderForFiles = render;
 render = function () {
+    $('favoriteTools').classList.toggle('hidden', !favoriteMode || filesMode);
     if (filesMode) {
         renderGroups();
         renderFiles();
@@ -355,12 +356,15 @@ $('fileEditForm').onsubmit = async event => {
         $('fileEditDialog').close();
         await loadFileItems();
     } catch {
-        alert('保存失败，请检查存储空间。');
+        alert(t("保存失败，请检查存储空间。"));
     }
 };
 $('closeFilePreview').onclick = () => $('filePreviewDialog').close();
 $('filePreviewDialog').addEventListener('close', closeFilePreview);
-$('filesStatus').textContent = nativeFileCollection()
-    ? '文件保存在拾页本机资料库中，加密备份包含文件内容。'
-    : '文件保存在当前浏览器中，清除网站数据会移除收藏。请定期导出加密备份。';
+function updateFileStorageStatus() {
+    $('filesStatus').textContent = nativeFileCollection()
+    ? t("文件保存在拾页本机资料库中，加密备份包含文件内容。")
+    : t("文件保存在当前浏览器中，清除网站数据会移除收藏。请定期导出加密备份。");
+}
+updateFileStorageStatus();
 loadFileItems();

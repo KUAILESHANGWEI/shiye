@@ -4,4 +4,5 @@
 *.dmg
 *.json
 !package.json
+!Resources/NativeLocalizations.json
 .build/

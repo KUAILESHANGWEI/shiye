@@ -4,6 +4,33 @@ import UniformTypeIdentifiers
 import LinkPresentation
 import Quartz
 
+
+private let nativeTranslations: [String: [String: String]] = {
+    guard let url = Bundle.main.url(forResource: "NativeLocalizations", withExtension: "json"),
+          let data = try? Data(contentsOf: url),
+          let translations = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]] else { return [:] }
+    return translations
+}()
+private let nativeEnglish = nativeTranslations["en"] ?? [:]
+func nativeText(_ text: String) -> String {
+    let preference = UserDefaults.standard.string(forKey: "shiye-language") ?? "system"
+    let supported = Set(["zh"] + Array(nativeTranslations.keys))
+    let preferredLanguages = preference == "system" ? Locale.preferredLanguages : [preference]
+    let language = preferredLanguages.map { String($0.split(separator: "-")[0]).lowercased() }
+        .first { supported.contains($0) } ?? "en"
+    return language == "zh" ? text : (nativeTranslations[language]?[text] ?? nativeEnglish[text] ?? text)
+}
+func refreshMenuLanguage(_ menu: NSMenu?) {
+    for item in menu?.items ?? [] {
+        let source = item.identifier?.rawValue ?? item.title
+        if nativeEnglish[source] != nil {
+            item.identifier = NSUserInterfaceItemIdentifier(source)
+            item.title = nativeText(source)
+        }
+        refreshMenuLanguage(item.submenu)
+    }
+}
+
 func libraryURL() -> URL {
     let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     return root.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.shiyu.preview", isDirectory: true).appendingPathComponent("bookmarks.json")
@@ -11,6 +38,13 @@ func libraryURL() -> URL {
 func notesURL() -> URL { libraryURL().deletingLastPathComponent().appendingPathComponent("notes.json") }
 final class NativeBridge: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "setLanguage" {
+            guard let value = message.body as? String, (["system", "zh"] + Array(nativeTranslations.keys)).contains(value) else { return }
+            UserDefaults.standard.set(value, forKey: "shiye-language")
+            refreshMenuLanguage(NSApp.mainMenu)
+            NSApp.windows.first { $0.identifier?.rawValue == "shiye-main" }?.title = nativeText("拾页")
+            return
+        }
         if message.name == "fetchLinkMetadata" {
             guard let body = message.body as? [String: String], let id = body["id"], let raw = body["url"], let url = URL(string: raw), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
             if let host = url.host?.lowercased(), host == "youtu.be" || host == "youtube.com" || host.hasSuffix(".youtube.com") {
@@ -52,29 +86,23 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             let provider = LPMetadataProvider()
             provider.timeout = 15
             provider.startFetchingMetadata(for: url) { metadata, error in
-                let result: [String: String] = ["id": id, "title": metadata?.title ?? "", "error": error == nil ? "" : "无法读取页面信息，可以手动编辑标题"]
+                let result: [String: String] = ["id": id, "title": metadata?.title ?? "", "error": error == nil ? "" : nativeText("无法读取页面信息，可以手动编辑标题")]
                 guard let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) else { return }
                 DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuMetadataResult(\(json))") }
                 _ = provider
             }
             return
         }
-        if message.name == "persistNotes" {
-            guard let value = message.body as? String, let data = value.data(using: .utf8) else { return }
-            do { let url = notesURL(); try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url, options: .atomic) }
-            catch { let alert = NSAlert(error: error); alert.messageText = "保存笔记失败"; alert.runModal() }
-            return
-        }
         if message.name == "persistLibrary" {
             guard let value = message.body as? String, let data = value.data(using: .utf8) else { return }
             do { let url = libraryURL(); try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url, options: .atomic) }
-            catch { let alert = NSAlert(error: error); alert.messageText = "保存收藏失败"; alert.runModal() }
+            catch { let alert = NSAlert(error: error); alert.messageText = nativeText("保存收藏失败"); alert.runModal() }
             return
         }
         if message.name == "chooseBackupDirectory" {
             guard let target = message.body as? String, ["icloud", "google"].contains(target) else { return }
             let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.canCreateDirectories = true; panel.allowsMultipleSelection = false
-            panel.message = target == "icloud" ? "选择 iCloud 备份文件夹" : "选择 Google Drive 同步文件夹"
+            panel.message = target == "icloud" ? nativeText("选择 iCloud 备份文件夹") : nativeText("选择 Google Drive 同步文件夹")
             if panel.runModal() == .OK, let url = panel.url {
                 UserDefaults.standard.set(url.path, forKey: "backup-directory-" + target)
                 let literal = (try? JSONSerialization.data(withJSONObject: [url.path])).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
@@ -86,19 +114,36 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             guard let body = message.body as? [String: Any], let envelope = body["data"] as? String, let data = envelope.data(using: .utf8), let targets = body["targets"] as? [String] else { return }
             var outcomes: [String] = []
             for target in targets where ["icloud", "google"].contains(target) {
-                guard let path = UserDefaults.standard.string(forKey: "backup-directory-" + target) else { outcomes.append(target + "：未选择文件夹"); continue }
-                do { _ = try BackupStore.write(data, to: URL(fileURLWithPath: path, isDirectory: true)); outcomes.append(target + "：成功") }
-                catch { outcomes.append(target + "：" + error.localizedDescription) }
+                guard let path = UserDefaults.standard.string(forKey: "backup-directory-" + target) else { outcomes.append(target + nativeText("：未选择文件夹")); continue }
+                do { _ = try BackupStore.write(data, to: URL(fileURLWithPath: path, isDirectory: true)); outcomes.append(target + nativeText("：成功")) }
+                catch { outcomes.append(target + " · " + nativeText(error.localizedDescription)) }
             }
             let json = (try? JSONSerialization.data(withJSONObject: outcomes)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
             message.webView?.evaluateJavaScript("window.shiyuBackupResult(\(json))")
             return
         }
         guard message.name == "saveBackup", let value = message.body as? String, let data = value.data(using: .utf8) else { return }
-        let panel = NSSavePanel(); panel.nameFieldStringValue = "拾页加密备份.json"; panel.allowedContentTypes = [.json]
+        let panel = NSSavePanel(); panel.nameFieldStringValue = nativeText("拾页加密备份.json"); panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
             do { try data.write(to: url, options: .atomic) }
             catch { let alert = NSAlert(error: error); alert.runModal() }
+        }
+    }
+}
+final class NotesBridge: NSObject, WKScriptMessageHandlerWithReply {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        guard let value = message.body as? String, let data = value.data(using: .utf8),
+              let _ = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            replyHandler(nil, nativeText("保存笔记失败"))
+            return
+        }
+        do {
+            let url = notesURL()
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            replyHandler(true, nil)
+        } catch {
+            replyHandler(nil, nativeText("保存笔记失败"))
         }
     }
 }
@@ -108,7 +153,7 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         guard let body = message.body as? [String: Any], let action = body["action"] as? String else {
-            replyHandler(nil, "文件请求格式不正确")
+            replyHandler(nil, nativeText("文件请求格式不正确"))
             return
         }
         do {
@@ -128,7 +173,7 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
                 try store.validate(record)
                 let directory = FileManager.default.temporaryDirectory.appendingPathComponent("shiye-preview-" + UUID().uuidString, isDirectory: true)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let name = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? "文件"
+                let name = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? nativeText("文件")
                 let destination = directory.appendingPathComponent(name)
                 guard let encoded = record["data"] as? String, let data = Data(base64Encoded: encoded) else { throw invalidRequest() }
                 try data.write(to: destination, options: .atomic)
@@ -142,7 +187,7 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
                 guard let record = body["value"] as? [String: Any] else { throw invalidRequest() }
                 try store.validate(record)
                 let panel = NSSavePanel()
-                panel.nameFieldStringValue = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? "文件"
+                panel.nameFieldStringValue = (record["name"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? nativeText("文件")
                 if panel.runModal() == .OK, let destination = panel.url,
                    let encoded = record["data"] as? String, let data = Data(base64Encoded: encoded) {
                     try data.write(to: destination, options: .atomic)
@@ -152,7 +197,7 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
                 throw invalidRequest()
             }
         } catch {
-            replyHandler(nil, error.localizedDescription)
+            replyHandler(nil, nativeText(error.localizedDescription))
         }
     }
 
@@ -163,7 +208,7 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
     }
 
     private func invalidRequest() -> NSError {
-        NSError(domain: "ShiyeFiles", code: 2, userInfo: [NSLocalizedDescriptionKey: "文件请求格式不正确"])
+        NSError(domain: "ShiyeFiles", code: 2, userInfo: [NSLocalizedDescriptionKey: nativeText("文件请求格式不正确")])
     }
 }
 final class WindowDelegate: NSObject, NSWindowDelegate {
@@ -171,13 +216,13 @@ final class WindowDelegate: NSObject, NSWindowDelegate {
 }
 final class UIDelegate: NSObject, WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: "好"); alert.runModal(); completionHandler()
+        let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: nativeText("好")); alert.runModal(); completionHandler()
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: "确定"); alert.addButton(withTitle: "取消"); completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle: nativeText("确定")); alert.addButton(withTitle: nativeText("取消")); completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-        let alert = NSAlert(); alert.messageText = prompt; let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24)); field.stringValue = defaultText ?? ""; alert.accessoryView = field; alert.addButton(withTitle: "确定"); alert.addButton(withTitle: "取消"); alert.window.initialFirstResponder = field; completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
+        let alert = NSAlert(); alert.messageText = prompt; let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24)); field.stringValue = defaultText ?? ""; alert.accessoryView = field; alert.addButton(withTitle: nativeText("确定")); alert.addButton(withTitle: nativeText("取消")); alert.window.initialFirstResponder = field; completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel(); panel.allowsMultipleSelection = parameters.allowsMultipleSelection; panel.canChooseDirectories = false
@@ -196,7 +241,7 @@ let appItem = NSMenuItem(); mainMenu.addItem(appItem)
 let appMenu = NSMenu(); appItem.submenu = appMenu
 appMenu.addItem(withTitle: "退出拾页", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 let editItem = NSMenuItem(); mainMenu.addItem(editItem)
-let editMenu = NSMenu(title: "编辑"); editItem.submenu = editMenu
+let editMenu = NSMenu(title: "编辑"); editItem.title = "编辑"; editItem.submenu = editMenu
 editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
 let redo = editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z"); redo.keyEquivalentModifierMask = [.command, .shift]
 editMenu.addItem(.separator())
@@ -205,6 +250,7 @@ editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEqu
 editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
 editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 app.mainMenu = mainMenu
+refreshMenuLanguage(mainMenu)
 let config = WKWebViewConfiguration(); config.websiteDataStore = .default()
 if let data = try? Data(contentsOf: libraryURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyuNativeLibrary = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -212,14 +258,16 @@ if let data = try? Data(contentsOf: libraryURL()), let value = String(data: data
 if let data = try? Data(contentsOf: notesURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyeNativeNotes = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
 }
-let bridge = NativeBridge(); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "persistNotes"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+let bridge = NativeBridge(); config.userContentController.add(bridge, name: "setLanguage"); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+let notesBridge = NotesBridge()
+config.userContentController.addScriptMessageHandler(notesBridge, contentWorld: .page, name: "persistNotes")
 let fileBridge = FileCollectionBridge()
 config.userContentController.addScriptMessageHandler(fileBridge, contentWorld: .page, name: "fileCollection")
 let web = WKWebView(frame: .zero, configuration: config)
 let ui = UIDelegate(); web.uiDelegate = ui
 let delegate = WindowDelegate()
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760), styleMask: [.titled,.closable,.miniaturizable,.resizable], backing: .buffered, defer: false)
-window.title = "拾页"; window.minSize = NSSize(width: 720, height: 500); window.contentView = web; window.delegate = delegate; window.center(); window.makeKeyAndOrderFront(nil)
+window.identifier = NSUserInterfaceItemIdentifier("shiye-main"); window.title = nativeText("拾页"); window.minSize = NSSize(width: 720, height: 500); window.contentView = web; window.delegate = delegate; window.center(); window.makeKeyAndOrderFront(nil)
 if let url = Bundle.main.url(forResource: "index", withExtension: "html") { web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
 app.activate(ignoringOtherApps: true); app.run()
 

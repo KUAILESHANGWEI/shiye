@@ -1,0 +1,11 @@
+.settings-form { max-height: 82vh; overflow-y: auto; }
+.settings-heading, .settings-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.settings-heading h2 { margin: 0; }
+.settings-form section { border-top: 1px solid #e4ebe3; margin-top: 22px; padding-top: 12px; }
+.settings-form h3 { font-size: 15px; color: #52665a; margin-bottom: 14px; }
+.settings-form p { color: #708077; font-size: 13px; line-height: 1.6; margin: 5px 0; }
+.settings-row { margin: 18px 0; }
+.settings-row button { flex-shrink: 0; }
+.settings-form select, .lock-language select { border: 1px solid #dfe7df; border-radius: 8px; background: white; color: #52665a; padding: 9px; font: inherit; }
+.lock-language { display: flex; justify-content: flex-end; align-items: center; gap: 10px; color: #708077; font-size: 12px; margin-bottom: 16px; }
+.settings-success { color: #3e7350; }
