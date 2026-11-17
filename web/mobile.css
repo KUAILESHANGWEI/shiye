@@ -1,0 +1,179 @@
+.export-arrow { display: inline-block; margin-right: .35em; transform: rotate(180deg); }
+.backup-cloud { display: inline-block; width: 1em; margin-right: .35em; text-align: center; color: inherit; font-variant-emoji: text; }
+.phone-header, #mobileBackdrop { display: none; }
+.shiye-ios { background: #f5f7f3; -webkit-text-size-adjust: 100%; }
+.shiye-ios .phone-header { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 20; background: #f0f3ee; padding: 10px 16px; border-bottom: 1px solid #dfe6dd; }
+.shiye-ios .phone-header button { border: 0; background: transparent; color: #3d705a; font-size: 23px; min-width: 44px; min-height: 44px; }
+.shiye-ios .app { display: block; }
+.shiye-ios .sidebar { display: none; }
+.shiye-ios .collection-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #f0f3ee; padding: 8px 6px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #dfe6dd; }
+.shiye-ios .collection-nav .group { width: 100%; min-height: 50px; justify-content: center; text-align: center; white-space: normal; font-size: 12px; padding: 8px 3px; }
+.shiye-ios .main { padding: 24px 16px calc(92px + env(safe-area-inset-bottom)); }
+.shiye-ios .heading { display: block; margin-bottom: 22px; }
+.shiye-ios .heading h1 { font-size: 27px; overflow-wrap: anywhere; }
+.shiye-ios .toolbar { margin-top: 18px; justify-content: flex-start; flex-wrap: wrap; }
+.shiye-ios .toolbar .search { flex: 1; width: auto; }
+.shiye-ios input, .shiye-ios textarea, .shiye-ios [contenteditable] { font-size: 16px; }
+.shiye-ios .bookmark-tools { gap: 8px; }
+.shiye-ios .bookmark-tools > input[type=search], .shiye-ios .bookmark-tools > input:first-child { flex: 1 1 100%; width: 100%; }
+.shiye-ios .date-range { max-width: 100%; }
+.shiye-ios .modal { width: calc(100vw - 28px); max-height: calc(100dvh - 28px); }
+.shiye-ios .form { padding: 22px; }
+.shiye-ios .side-bottom { display: grid; margin-top: 24px; }
+.shiye-ios .sidebar .groups { display: grid; overflow: visible; }
+.shiye-ios .sidebar #backupSettings { display: none; }
+.shiye-ios.phone-menu-open .sidebar { display: block; position: fixed; top: 0; bottom: 0; left: 0; z-index: 40; width: min(320px, 85vw); overflow: auto; padding: 24px 16px; }
+.shiye-ios.phone-menu-open #mobileBackdrop { display: block; position: fixed; inset: 0; z-index: 30; border: 0; background: #1d302b66; width: 100%; }
+.shiye-ios #noteEditBody { max-height: 38dvh; }
+
+.shiye-ios .modal { max-height: calc(var(--phone-visible-height, 100dvh) - 24px); overflow-y: auto; }
+.shiye-ios.phone-keyboard-open .modal[open] {
+    position: fixed;
+    top: calc(var(--phone-visible-top, 0px) + 12px);
+    bottom: auto;
+    margin-block: 0;
+}
+
+/* iPhone collection layout */
+.shiye-ios #siteColumns,
+.shiye-ios #bookmarkColumns,
+.shiye-ios #notesColumns,
+.shiye-ios #filesColumns,
+.shiye-ios .toolbar .size-control { display: none !important; }
+.shiye-ios #cards,
+.shiye-ios #bookmarkCards,
+.shiye-ios #noteCards,
+.shiye-ios #fileCards { grid-template-columns: minmax(0, 1fr) !important; gap: 16px; }
+.shiye-ios #cards .card,
+.shiye-ios #bookmarkCards .card,
+.shiye-ios #noteCards .card,
+.shiye-ios #fileCards .card {
+    width: 100%;
+    height: 300px;
+    min-height: 300px;
+    max-height: 300px;
+    padding: 18px;
+    overflow: hidden;
+}
+.shiye-ios .card .card-footer { flex-shrink: 0; margin-top: auto; }
+.shiye-ios .card .card-footer button,
+.shiye-ios .card .card-footer a { min-height: 34px; display: flex; align-items: center; justify-content: center; }
+.shiye-ios #cards .card-footer { justify-content: space-between; }
+.shiye-ios #bookmarkCards .bookmark-cover { height: 64px; margin-bottom: 8px; }
+.shiye-ios #bookmarkCards .site-title a { -webkit-line-clamp: 2; font-size: 14px; }
+.shiye-ios #bookmarkCards .bookmark-description { -webkit-line-clamp: 2; font-size: 12px; }
+.shiye-ios #bookmarkCards .bookmark-meta { white-space: nowrap; font-size: 11px; }
+.shiye-ios #fileCards .file-cover { height: 80px; }
+.shiye-ios #fileCards .file-icon { height: 72px; flex-shrink: 0; }
+.shiye-ios .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 8px; align-items: stretch; }
+.shiye-ios #addSite { grid-column: 1 / -1; justify-self: start; min-height: 44px; margin: 0; }
+.shiye-ios #search { width: 100%; min-width: 0; min-height: 44px; font-size: 16px; }
+.shiye-ios .toolbar .popover-wrap { min-width: 0; }
+.shiye-ios #editGroup { width: 100%; height: 100%; min-height: 44px; padding-inline: 6px; font-size: 16px; }
+.shiye-ios .bookmark-tools { display: grid; align-items: stretch; }
+.shiye-ios .bookmark-tools > input,
+.shiye-ios .bookmark-tools > select,
+.shiye-ios .bookmark-tools > button,
+.shiye-ios .bookmark-tools .date-range input { width: 100%; min-width: 0; min-height: 44px; margin: 0; }
+.shiye-ios .bookmark-tools select { padding-inline: 6px; }
+.shiye-ios .bookmark-tools .date-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; width: 100%; }
+.shiye-ios .bookmark-tools .date-range input { padding-inline: 6px; }
+.shiye-ios #notesPanel .bookmark-tools { grid-template-columns: minmax(0, 3fr) repeat(2, minmax(74px, 1fr)); }
+.shiye-ios #notesPanel .date-range { grid-column: 1; }
+.shiye-ios #resetNotesFilters { grid-column: 2 / -1; }
+.shiye-ios #bookmarkPanel .bookmark-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.shiye-ios #bookmarkSearch { grid-column: 1 / -1; }
+.shiye-ios #bookmarkPanel .date-range { grid-column: 1 / 3; }
+.shiye-ios #filesPanel .bookmark-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.shiye-ios #filesSearch,
+.shiye-ios #filesPanel .date-range { grid-column: 1 / -1; }
+.shiye-ios #resetFilesFilters { grid-column: 3; grid-row: 2; }
+.shiye-ios #favoriteTools { grid-template-columns: minmax(0, 1fr) 80px; }
+.shiye-ios .bookmark-tools .date-range input[type=number]::-webkit-inner-spin-button,
+.shiye-ios .bookmark-tools .date-range input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+@media (max-width: 400px) {
+    .shiye-ios #notesSearch,
+    .shiye-ios .bookmark-tools .date-range input { font-size: 13px; }
+}
+.shiye-ios .card .card-footer .hidden { display: none; }
+
+.shiye-ios #mobileSettings .settings-sun { color: #d53b32; font-size: 28px; line-height: 1; font-variant-emoji: text; }
+
+.shiye-ios #bookmarkPanel .bookmark-tools {
+    grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) minmax(0, 1.1fr);
+}
+.shiye-ios #bookmarkPlatform { grid-column: 1; grid-row: 2; }
+.shiye-ios #bookmarkRating { grid-column: 3; grid-row: 2; }
+.shiye-ios #datePrecision { grid-column: 4; grid-row: 2; }
+.shiye-ios #bookmarkPanel .date-range { display: contents; }
+.shiye-ios #bookmarkFrom { grid-column: 1; grid-row: 3; }
+.shiye-ios #bookmarkPanel .date-range span { grid-column: 2; grid-row: 3; text-align: center; }
+.shiye-ios #bookmarkTo { grid-column: 3; grid-row: 3; }
+.shiye-ios #resetBookmarkFilters { grid-column: 4; grid-row: 3; }
+.shiye-ios #bookmarkPanel .bookmark-add > input,
+.shiye-ios #bookmarkPanel .bookmark-add > button,
+.shiye-ios #bookmarkPanel .bookmark-tools input,
+.shiye-ios #bookmarkPanel .bookmark-tools select,
+.shiye-ios #bookmarkPanel .bookmark-tools > button {
+    box-sizing: border-box;
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding-block: 0;
+    align-self: stretch;
+}
+
+.shiye-ios #filesPanel .bookmark-tools input,
+.shiye-ios #filesPanel .bookmark-tools select,
+.shiye-ios #filesPanel .bookmark-tools > button {
+    box-sizing: border-box;
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding-block: 0;
+    align-self: stretch;
+}
+.shiye-ios #filesPanel .date-range {
+    grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+}
+.shiye-ios #filesPanel .date-range input {
+    appearance: none;
+    -webkit-appearance: none;
+    max-width: 100%;
+    overflow: hidden;
+}
+.shiye-ios #filesPanel .date-range input::-webkit-date-and-time-value { min-width: 0; text-align: left; }
+.shiye-ios #filesPanel .date-range span {
+    width: 24px;
+    min-width: 24px;
+    margin: 0;
+    line-height: 44px;
+    text-align: center;
+}
+
+.shiye-ios #addSite,
+.shiye-ios #newNoteTitle,
+.shiye-ios #addNote,
+.shiye-ios #selectFiles {
+    box-sizing: border-box;
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding-block: 0;
+}
+
+.shiye-ios #bookmarkPlatform,
+.shiye-ios #bookmarkRating,
+.shiye-ios #datePrecision,
+.shiye-ios #bookmarkFrom,
+.shiye-ios #bookmarkTo,
+.shiye-ios #bookmarkPanel .date-range span,
+.shiye-ios #resetBookmarkFilters { font-size: 16px; }
+
+.shiye-ios #notesRating,
+.shiye-ios #notesDatePrecision { font-size: 16px; }
+
+.shiye-ios #filesType,
+.shiye-ios #filesRating { font-size: 16px; }

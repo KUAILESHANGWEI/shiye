@@ -5,6 +5,8 @@ let fileDBPromise;
 let fileViewURLs = [];
 let filePreviewURL = null;
 let fileImporting = false;
+let fileImportCancelled = false;
+const fileThumbnails = new Map();
 
 function nativeFileCollection() {
     return window.webkit?.messageHandlers?.fileCollection;
@@ -25,7 +27,15 @@ function fileDB() {
     return fileDBPromise;
 }
 
-function encodeFile(item) {
+async function encodeFile(item) {
+    if (item.native) {
+        let data = '';
+        for (let offset = 0; offset < item.size; offset += 786432) {
+            data += await nativeFileCollection().postMessage({action: 'readFilePart', value: {id: item.id, offset, length: 786432}});
+        }
+        const {native, blob, ...metadata} = item;
+        return {...metadata, data};
+    }
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
@@ -45,18 +55,19 @@ function decodeFiles(records) {
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id) ||
             ids.has(record.id) || typeof record.name !== 'string' || !record.name ||
             typeof record.type !== 'string' || typeof record.note !== 'string' ||
-            typeof record.createdAt !== 'string' || typeof record.data !== 'string' ||
+            typeof record.createdAt !== 'string' || (!record.native && !(record.blob instanceof Blob) && typeof record.data !== 'string') ||
             !Number.isInteger(record.rating) || record.rating < 0 || record.rating > 3 ||
             !Number.isSafeInteger(record.size) || record.size < 0) {
             throw Error(t("文件收藏数据不完整"));
         }
         ids.add(record.id);
-        const bytes = Uint8Array.from(atob(record.data), character => character.charCodeAt(0));
-        if (bytes.length !== record.size) throw Error(t("文件内容已损坏"));
+        if (record.native) return {...record, native: true};
+        const blob = record.blob instanceof Blob ? record.blob : new Blob([Uint8Array.from(atob(record.data), character => character.charCodeAt(0))], {type: record.type});
+        if (blob.size !== record.size) throw Error(t("文件内容已损坏"));
         return {
             id: record.id, name: record.name, type: record.type, size: record.size,
             note: record.note, rating: record.rating, createdAt: record.createdAt,
-            blob: new Blob([bytes], {type: record.type})
+            blob
         };
     });
 }
@@ -65,13 +76,30 @@ async function fileStore(action, value) {
     const bridge = nativeFileCollection();
     if (bridge) {
         if (action === 'getAll') return decodeFiles(await bridge.postMessage({action}));
-        if (action === 'put') {
+        if (window.shiyeNativeFileStreaming) {
+            if (action === 'put' && value.native) {
+                await bridge.postMessage({action: 'updateMetadata', value: {id: value.id, note: value.note, rating: value.rating}});
+            } else if (action === 'put' || action === 'merge') {
+                const items = action === 'put' ? [value] : value;
+                for (const item of items) {
+                    if (fileImportCancelled) throw Error('Cancelled');
+                    const {blob, native, ...metadata} = item;
+                    const token = await stageNativeFile(blob, metadata);
+                    try {
+                        $('cancelFileImport').disabled = true;
+                        await bridge.postMessage({action: 'finishImport', value: token});
+                        $('cancelFileImport').disabled = false;
+                    } catch (error) {
+                        await bridge.postMessage({action: 'cancelImport', value: token});
+                        throw error;
+                    }
+                }
+            } else await bridge.postMessage({action, value});
+        } else if (action === 'put') {
             await bridge.postMessage({action: 'merge', value: [await encodeFile(value)]});
         } else if (action === 'merge') {
-            await bridge.postMessage({action, value: await Promise.all(value.map(encodeFile))});
-        } else {
-            await bridge.postMessage({action, value});
-        }
+            for (const item of value) await bridge.postMessage({action, value: [await encodeFile(item)]});
+        } else await bridge.postMessage({action, value});
         return;
     }
     const database = await fileDB();
@@ -107,6 +135,10 @@ async function loadFileItems() {
 async function importFiles(list) {
     if (fileImporting) return;
     fileImporting = true;
+    fileImportCancelled = false;
+    $('fileImportControls').hidden = !window.shiyeNativeFileStreaming;
+    $('fileImportProgress').value = 0;
+    $('cancelFileImport').disabled = false;
     $('selectFiles').disabled = true;
     try {
         const items = Array.from(list).map(file => ({
@@ -118,9 +150,11 @@ async function importFiles(list) {
         $('filesStatus').textContent = `${t("已收藏")} ${items.length} ${t("个文件。")}` +
             (nativeFileCollection() ? t("文件已复制到拾页资料库。") : t("文件保存在当前浏览器中。"));
     } catch {
-        $('filesStatus').textContent = t("文件未能保存，请检查可用空间或存储权限后重试。");
+        $('filesStatus').textContent = fileImportCancelled ? t('文件存储已取消') : t("文件未能保存，请检查可用空间或存储权限后重试。");
+        await loadFileItems();
     } finally {
         fileImporting = false;
+        $('fileImportControls').hidden = true;
         $('selectFiles').disabled = false;
         $('filePicker').value = '';
     }
@@ -129,7 +163,7 @@ async function importFiles(list) {
 async function exportFile(file) {
     try {
         if (nativeFileCollection()) {
-            await nativeFileCollection().postMessage({action: 'export', value: await encodeFile(file)});
+            await nativeFileCollection().postMessage({action: 'export', value: file.native ? {id: file.id, native: true} : await encodeFile(file)});
             return;
         }
         const url = URL.createObjectURL(file.blob);
@@ -203,9 +237,9 @@ function renderFiles() {
     $('fileCards').innerHTML = visible.length ? visible.map(file => {
         let cover;
         if (fileIsRaster(file)) {
-            const url = URL.createObjectURL(file.blob);
-            fileViewURLs.push(url);
-            cover = `<img class="file-cover" src="${esc(url)}" alt="${esc(file.name)}">`;
+            const url = file.native ? fileThumbnails.get(file.id) : URL.createObjectURL(file.blob);
+            if (url && !file.native) fileViewURLs.push(url);
+            cover = url ? `<img class="file-cover" src="${esc(url)}" alt="${esc(file.name)}">` : `<div class="file-icon">${t('图片')}</div>`;
         } else {
             const extension = file.name.split('.').pop().slice(0, 8).toUpperCase() || 'FILE';
             cover = `<div class="file-icon">${esc(extension)}</div>`;
@@ -227,6 +261,13 @@ function renderFiles() {
         </article>`;
     }).join('') : ("<div class=\"empty\"><strong>" + t("还没有匹配的文件") + "</strong>" + t("选择文件或拖入图片、文档，开始收藏") + "</div>");
 
+    for (const file of visible.filter(file => file.native && fileIsRaster(file) && !fileThumbnails.has(file.id))) {
+        fileThumbnails.set(file.id, '');
+        nativeFileCollection().postMessage({action: 'thumbnail', value: file.id}).then(url => {
+            if (url) { fileThumbnails.set(file.id, url); if (filesMode) renderFiles(); }
+            else fileThumbnails.delete(file.id);
+        }).catch(() => fileThumbnails.delete(file.id));
+    }
     for (const button of $('fileCards').querySelectorAll('[data-id]')) {
         button.onclick = async () => {
             const file = fileItems.find(item => item.id === button.dataset.id);
@@ -257,9 +298,9 @@ function renderFiles() {
 }
 
 async function previewFile(file) {
-    if (nativeFileCollection() && !fileIsRaster(file) && fileKind(file) !== 'text') {
+    if (nativeFileCollection() && (file.native || (!fileIsRaster(file) && fileKind(file) !== 'text'))) {
         try {
-            await nativeFileCollection().postMessage({action: 'preview', value: await encodeFile(file)});
+            await nativeFileCollection().postMessage({action: 'preview', value: file.native ? {id: file.id, native: true} : await encodeFile(file)});
         } catch {
             alert(t("文件预览失败，可导出后打开。"));
         }
@@ -368,3 +409,172 @@ function updateFileStorageStatus() {
 }
 updateFileStorageStatus();
 loadFileItems();
+
+$('cancelFileImport').onclick = () => { fileImportCancelled = true; };
+
+async function stageNativeFile(blob, metadata) {
+    const bridge = nativeFileCollection();
+    const token = await bridge.postMessage({action: 'beginImport', value: metadata});
+    try {
+        for (let offset = 0; offset < blob.size; offset += 1048576) {
+            if (fileImportCancelled) throw Error('Cancelled');
+            const part = await encodeFile({blob: blob.slice(offset, offset + 1048576)});
+            await bridge.postMessage({action: 'appendImport', value: {token, offset, data: part.data}});
+            $('fileImportProgress').value = Math.min(1, (offset + 1048576) / blob.size);
+        }
+        if (fileImportCancelled) throw Error('Cancelled');
+        return token;
+    } catch (error) {
+        await bridge.postMessage({action: 'cancelImport', value: token});
+        throw error;
+    }
+}
+
+function backupPassword() {
+    const password = prompt(t('请设置此备份的加密密码'));
+    if (password === null) return null;
+    if (!password) { alert(t('密码不能为空')); return null; }
+    if (prompt(t('再次输入备份密码')) !== password) { alert(t('两次密码不一致')); return null; }
+    return password;
+}
+const legacyExportBackup = $('exportBtn').onclick;
+$('exportBtn').onclick = async () => {
+    if (!window.shiyeNativeFileStreaming) return legacyExportBackup();
+    const password = backupPassword();
+    if (password === null) return;
+    $('exportBtn').disabled = true;
+    try { await nativeFileCollection().postMessage({action: 'exportArchive', value: {password}}); }
+    catch (error) { alert(t('导出失败：') + error.message); }
+    finally { $('exportBtn').disabled = false; }
+};
+// Native archives use authenticated, ordered frames and a final completion frame.
+async function readWebBackupArchive(file, password) {
+    const invalid = () => Error(t('密码错误或备份文件已损坏'));
+    let offset = 0;
+    async function read(count) {
+        if (!Number.isSafeInteger(count) || count < 0 || count > file.size - offset) throw invalid();
+        const bytes = new Uint8Array(await file.slice(offset, offset + count).arrayBuffer());
+        if (bytes.length !== count) throw invalid();
+        offset += count;
+        return bytes;
+    }
+    const header = await read(25);
+    if (new TextDecoder().decode(header.slice(0, 9)) !== 'SHIYE-A1\n') throw invalid();
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    const secret = await crypto.subtle.deriveKey({name: 'PBKDF2', salt: header.slice(9), iterations: 200000, hash: 'SHA-256'}, base, {name: 'AES-GCM', length: 256}, false, ['decrypt']);
+    let frameIndex = 0;
+    async function frame() {
+        if (fileImportCancelled) throw Error(t('文件存储已取消'));
+        const lengthBytes = await read(4);
+        const length = new DataView(lengthBytes.buffer).getUint32(0);
+        if (length < 28 || length > 64 * 1024 * 1024) throw invalid();
+        const sealed = await read(length);
+        const aad = new Uint8Array(33);
+        aad.set(header);
+        new DataView(aad.buffer).setBigUint64(25, BigInt(frameIndex));
+        let plaintext;
+        try {
+            plaintext = await crypto.subtle.decrypt({name: 'AES-GCM', iv: sealed.slice(0, 12), additionalData: aad}, secret, sealed.slice(12));
+        } catch { throw invalid(); }
+        frameIndex++;
+        $('fileImportProgress').value = offset / file.size;
+        return plaintext;
+    }
+    async function json() {
+        try {
+            const value = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(await frame()));
+            if (!value || Array.isArray(value) || typeof value !== 'object') throw invalid();
+            return value;
+        } catch (error) {
+            if (fileImportCancelled) throw error;
+            throw invalid();
+        }
+    }
+    const counts = await json();
+    if (![counts.groups, counts.notes, counts.files].every(count => Number.isSafeInteger(count) && count >= 0 && count <= 1000000)) throw invalid();
+    const importedGroups = [], importedNotes = [], importedFiles = [];
+    for (let index = 0; index < counts.groups; index++) importedGroups.push(await json());
+    for (let index = 0; index < counts.notes; index++) importedNotes.push(await json());
+    for (let index = 0; index < counts.files; index++) {
+        const metadata = await json();
+        if (!Number.isSafeInteger(metadata.size) || metadata.size < 0) throw invalid();
+        let blob = new Blob([], {type: typeof metadata.type === 'string' ? metadata.type : ''});
+        for (let remaining = metadata.size; remaining > 0;) {
+            const block = await frame();
+            const expected = Math.min(1048576, remaining);
+            if (block.byteLength !== expected) throw invalid();
+            blob = new Blob([blob, block], {type: blob.type});
+            remaining -= expected;
+        }
+        importedFiles.push({...metadata, native: false, blob});
+    }
+    const completedFrames = frameIndex;
+    const end = await json();
+    if (end.finished !== true || end.frames !== completedFrames || offset !== file.size) throw invalid();
+    return {data: {format: 'shiyebookmarks', version: 1, groups: importedGroups, notes: importedNotes}, files: decodeFiles(importedFiles)};
+}
+
+const legacyImportBackup = $('file').onchange;
+$('file').onchange = async event => {
+    const file = event.target.files[0];
+    if (!file) return;
+    let header;
+    try { header = await file.slice(0, 9).text(); }
+    catch { alert(t('导入失败：') + t('文件内容已损坏')); event.target.value = ''; return; }
+    if (header !== 'SHIYE-A1\n' && !file.name.toLowerCase().endsWith('.shiye')) return legacyImportBackup(event);
+    const password = prompt(t('请输入导出此备份时设置的密码'));
+    if (password === null) { event.target.value = ''; return; }
+    if (fileImporting) { event.target.value = ''; return; }
+    fileImporting = true;
+    fileImportCancelled = false;
+    $('fileImportControls').hidden = false;
+    $('cancelFileImport').disabled = false;
+    let token;
+    try {
+        if (!window.shiyeNativeFileStreaming) {
+            const archive = await readWebBackupArchive(file, password);
+            if (fileImportCancelled) return;
+            $('cancelFileImport').disabled = true;
+            await importBackupData(archive.data, archive.files);
+            return;
+        }
+        token = await stageNativeFile(file, {id: crypto.randomUUID(), name: file.name, type: 'application/octet-stream', size: file.size, note: '', rating: 0, createdAt: new Date().toISOString()});
+        $('cancelFileImport').disabled = true;
+        const archive = await nativeFileCollection().postMessage({action: 'inspectArchive', value: {token, password}});
+        const importedGroups = validateBackupGroups(archive.groups);
+        const importedNotes = validateImportedNotes(archive.notes);
+        const mergedGroups = mergeImportedGroups(groups, importedGroups);
+        const mergedNotes = mergeImportedNotes(notes, importedNotes);
+        if (!confirm(t('确认导入？'))) return;
+        await nativeFileCollection().postMessage({action: 'commitArchive', value: {token, groups: mergedGroups.next, notes: mergedNotes.next}});
+        token = null;
+        await loadFileItems();
+        alert(t('导入完成。'));
+    } catch (error) { alert(t('导入失败：') + error.message); }
+    finally {
+        if (token) {
+            await nativeFileCollection().postMessage({action: 'cancelImport', value: token});
+            await nativeFileCollection().postMessage({action: 'cancelArchive', value: token});
+        }
+        fileImporting = false;
+        $('fileImportControls').hidden = true;
+        event.target.value = '';
+    }
+};
+
+const legacyCloudBackup = $('backupNow').onclick;
+$('backupNow').onclick = async () => {
+    if (!window.shiyeNativeFileStreaming) return legacyCloudBackup();
+    const targets = [];
+    if ($('backupIcloudEnabled').checked) targets.push('icloud');
+    if ($('backupGoogleEnabled').checked) targets.push('google');
+    if (!targets.length) { alert(t('请至少选择一个备份位置')); return; }
+    const password = backupPassword();
+    if (password === null) return;
+    $('backupNow').disabled = true;
+    try {
+        const outcomes = await nativeFileCollection().postMessage({action: 'exportArchive', value: {password, targets}});
+        if (Array.isArray(outcomes)) alert(outcomes.join('\n'));
+    } catch (error) { alert(t('导出失败：') + error.message); }
+    finally { $('backupNow').disabled = false; }
+};

@@ -71,10 +71,10 @@ function mergeImportedNotes(local, incoming) {
 
 function saveNotes(change = current => current) {
     const task = noteWriteQueue.then(async () => {
-        const next = typeof change === 'function' ? change(structuredClone(notes)) : structuredClone(change);
+        let next = typeof change === 'function' ? change(structuredClone(notes)) : structuredClone(change);
         const data = JSON.stringify(next);
         const bridge = window.webkit?.messageHandlers?.persistNotes;
-        if (bridge) await bridge.postMessage(data);
+        if (bridge) { const saved = await bridge.postMessage(data); if (Array.isArray(saved)) next = saved; }
         else localStorage.setItem(notesKey, data);
         notes = next;
         return true;

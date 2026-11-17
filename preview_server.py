@@ -72,15 +72,37 @@ def extract(url):
     return {k:str(v)[:2000] for k,v in result.items()}
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(Path(__file__).parent/'web'),**kwargs)
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
     def do_POST(self):
-        if self.path!='/api/metadata': self.send_error(404); return
-        if self.headers.get('Origin') not in ('http://127.0.0.1:8765','http://localhost:8765'): self.send_error(403); return
+        if self.path != '/api/metadata':
+            self.send_error(404); return
+        origins = ('http://127.0.0.1:8765', 'http://localhost:8765')
+        if self.headers.get('Origin') not in origins or self.headers.get('Host') not in ('127.0.0.1:8765', 'localhost:8765'):
+            self.send_error(403); return
         try:
-            length=int(self.headers.get('Content-Length','0'))
-            if length>8192: raise ValueError('请求过大')
-            data=json.loads(self.rfile.read(length)); result=extract(data['url']); code=200
-        except Exception as e: result={'error':str(e)}; code=400
-        body=json.dumps(result,ensure_ascii=False).encode(); self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+            length = int(self.headers.get('Content-Length', '0'))
+            limit = 8192
+            if length <= 0 or length > limit:
+                raise ValueError('请求过大或为空')
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError('请求格式不正确')
+            result = extract(data['url'])
+            code = 200
+        except (ValueError, KeyError, TypeError):
+            result, code = {'error': '请求格式不正确，请检查输入后重试。'}, 400
+        except Exception:
+            result, code = {'error': '暂时无法完成请求，请稍后重试。'}, 502
+        body = json.dumps(result, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        try: self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError): pass
     def log_message(self,*args): pass
 if __name__=='__main__':
     print('拾页预览：http://127.0.0.1:8765',flush=True)

@@ -20,3 +20,5 @@
 #filePreviewContent p{line-height:1.7}
 .files-tools{margin-top:18px}
 
+#fileImportControls:not([hidden]) { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+#fileImportProgress { flex: 1; min-width: 0; accent-color: #3d705a; }

@@ -36,8 +36,16 @@ func libraryURL() -> URL {
     return root.appendingPathComponent(Bundle.main.bundleIdentifier ?? "local.shiyu.preview", isDirectory: true).appendingPathComponent("bookmarks.json")
 }
 func notesURL() -> URL { libraryURL().deletingLastPathComponent().appendingPathComponent("notes.json") }
-final class NativeBridge: NSObject, WKScriptMessageHandler {
+@MainActor final class NativeBridge: NSObject, WKScriptMessageHandler {
+#if SHIYE_CLOUD
+    var session: LibrarySession?
+#endif
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "setTheme" {
+            guard let value = message.body as? String, ["day", "night"].contains(value) else { return }
+            NSApp.appearance = NSAppearance(named: value == "night" ? .darkAqua : .aqua)
+            return
+        }
         if message.name == "setLanguage" {
             guard let value = message.body as? String, (["system", "zh"] + Array(nativeTranslations.keys)).contains(value) else { return }
             UserDefaults.standard.set(value, forKey: "shiye-language")
@@ -76,10 +84,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 }
             }
             var request = URLRequest(url: url)
-            request.timeoutInterval = 15
+            request.timeoutInterval = 20
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
             URLSession.shared.dataTask(with: request) { data, response, _ in
-                guard let data = data, data.count <= 2_000_000, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let html = String(data: data, encoding: .utf8) else { return }
-                let result = ["id": id, "html": String(html.prefix(500_000))]
+                guard let data = data, data.count <= 8_000_000, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let html = String(data: data, encoding: .utf8) else { return }
+                let result = ["id": id, "html": html]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: result), let json = String(data: encoded, encoding: .utf8) else { return }
                 DispatchQueue.main.async { message.webView?.evaluateJavaScript("window.shiyuHTMLResult(\(json))") }
             }.resume()
@@ -95,6 +104,15 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         }
         if message.name == "persistLibrary" {
             guard let value = message.body as? String, let data = value.data(using: .utf8) else { return }
+#if SHIYE_CLOUD
+            if let session {
+                do {
+                    guard let records = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw CocoaError(.coderInvalidValue) }
+                    _ = try session.writeGroups(records)
+                } catch { let alert = NSAlert(error: error); alert.runModal(); session.sendCurrent() }
+                return
+            }
+#endif
             do { let url = libraryURL(); try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url, options: .atomic) }
             catch { let alert = NSAlert(error: error); alert.messageText = nativeText("保存收藏失败"); alert.runModal() }
             return
@@ -105,6 +123,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             panel.message = target == "icloud" ? nativeText("选择 iCloud 备份文件夹") : nativeText("选择 Google Drive 同步文件夹")
             if panel.runModal() == .OK, let url = panel.url {
                 UserDefaults.standard.set(url.path, forKey: "backup-directory-" + target)
+                if let bookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    UserDefaults.standard.set(bookmark, forKey: "backup-bookmark-" + target)
+                }
                 let literal = (try? JSONSerialization.data(withJSONObject: [url.path])).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
                 message.webView?.evaluateJavaScript("window.shiyuDirectorySelected(\(target == "icloud" ? "'icloud'" : "'google'"), \(literal)[0])")
             }
@@ -130,7 +151,10 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         }
     }
 }
-final class NotesBridge: NSObject, WKScriptMessageHandlerWithReply {
+@MainActor final class NotesBridge: NSObject, WKScriptMessageHandlerWithReply {
+#if SHIYE_CLOUD
+    var session: LibrarySession?
+#endif
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         guard let value = message.body as? String, let data = value.data(using: .utf8),
               let _ = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
@@ -138,6 +162,13 @@ final class NotesBridge: NSObject, WKScriptMessageHandlerWithReply {
             return
         }
         do {
+#if SHIYE_CLOUD
+            if let session {
+                let records = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
+                replyHandler(try session.writeNotes(records).notes, nil)
+                return
+            }
+#endif
             let url = notesURL()
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
@@ -147,7 +178,10 @@ final class NotesBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 }
-final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLPreviewPanelDataSource {
+@MainActor final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLPreviewPanelDataSource {
+#if SHIYE_CLOUD
+    var session: LibrarySession?
+#endif
     private var previewURL: URL?
     private let store = FileCollectionStore(url: libraryURL().deletingLastPathComponent().appendingPathComponent("files.json"))
 
@@ -156,16 +190,91 @@ final class FileCollectionBridge: NSObject, WKScriptMessageHandlerWithReply, QLP
             replyHandler(nil, nativeText("文件请求格式不正确"))
             return
         }
+#if SHIYE_CLOUD
+        if let session {
+            if action == "exportArchive", let request = body["value"] as? [String: Any], let password = request["password"] as? String {
+                Task { @MainActor in
+                    do {
+                        let url = try await session.exportArchive(password: password)
+                        if let targets = request["targets"] as? [String] {
+                            var outcomes: [String] = []
+                            for target in targets {
+                                do {
+                                    let directory = try BackupStore.directory(for: target)
+                                    let scoped = directory.startAccessingSecurityScopedResource()
+                                    defer { if scoped { directory.stopAccessingSecurityScopedResource() } }
+                                    _ = try BackupStore.writeArchive(url, to: directory)
+                                    outcomes.append(target + nativeText("：成功"))
+                                } catch { outcomes.append(target + " · " + error.localizedDescription) }
+                            }
+                            replyHandler(outcomes, nil)
+                            return
+                        }
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = "Shiye-backup.shiye"
+                        if panel.runModal() == .OK, let destination = panel.url {
+                            try BackupStore.exportFile(url, to: destination)
+                        }
+                        replyHandler(true, nil)
+                    } catch { replyHandler(nil, error.localizedDescription) }
+                }
+                return
+            }
+            if ["getAll", "beginImport", "appendImport", "finishImport", "cancelImport", "updateMetadata", "thumbnail", "readFilePart", "inspectArchive", "cancelArchive", "commitArchive"].contains(action) {
+                Task { @MainActor in
+                    do { replyHandler(try await session.fileRequest(action, value: body["value"]), nil) }
+                    catch { replyHandler(nil, error.localizedDescription) }
+                }
+                return
+            }
+            if ["preview", "export"].contains(action), let record = body["value"] as? [String: Any], record["native"] as? Bool == true, let id = record["id"] as? String {
+                Task { @MainActor in
+                    do {
+                        let url = try await session.fileURL(id)
+                        if action == "preview" {
+                            previewURL = url
+                            let panel = QLPreviewPanel.shared()!
+                            panel.dataSource = self
+                            panel.reloadData()
+                            panel.makeKeyAndOrderFront(nil)
+                        } else {
+                            let panel = NSSavePanel()
+                            panel.nameFieldStringValue = url.lastPathComponent
+                            if panel.runModal() == .OK, let destination = panel.url {
+                                try BackupStore.exportFile(url, to: destination)
+                            }
+                        }
+                        replyHandler(true, nil)
+                    } catch { replyHandler(nil, error.localizedDescription) }
+                }
+                return
+            }
+        }
+#endif
         do {
             switch action {
             case "getAll":
+#if SHIYE_CLOUD
+                if let session { replyHandler(try session.store.snapshot().files, nil); return }
+#endif
                 replyHandler(try store.read(), nil)
             case "merge":
                 guard let records = body["value"] as? [[String: Any]] else { throw invalidRequest() }
+#if SHIYE_CLOUD
+                if let session {
+                    for record in records { try store.validate(record) }
+                    try session.mergeFiles(records)
+                    replyHandler(true, nil)
+                    return
+                }
+#endif
                 _ = try store.merge(records)
                 replyHandler(true, nil)
             case "delete":
                 guard let id = body["value"] as? String else { throw invalidRequest() }
+#if SHIYE_CLOUD
+                if let session { try session.deleteFile(id); replyHandler(true, nil); return }
+#endif
                 try store.delete(id: id)
                 replyHandler(true, nil)
             case "preview":
@@ -232,7 +341,28 @@ final class UIDelegate: NSObject, WKUIDelegate {
         if navigationAction.targetFrame == nil, let url = navigationAction.request.url, ["https", "http"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url) }; return nil
     }
 }
-@main struct ShiyuApp {
+#if SHIYE_CLOUD
+@MainActor final class CloudAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.registerForRemoteNotifications()
+    }
+
+    func application(_ application: NSApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NSLog("Shiye remote notification registration succeeded")
+    }
+
+    func application(_ application: NSApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NSLog("Shiye remote notification registration failed: %@", String(describing: error))
+    }
+}
+
+@MainActor final class CloudNavigation: NSObject, WKNavigationDelegate {
+    let session: LibrarySession
+    init(session: LibrarySession) { self.session = session }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { session.sendCurrent() }
+}
+#endif
+@MainActor @main struct ShiyuApp {
  static func main() {
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
@@ -258,17 +388,38 @@ if let data = try? Data(contentsOf: libraryURL()), let value = String(data: data
 if let data = try? Data(contentsOf: notesURL()), let value = String(data: data, encoding: .utf8), let escaped = try? JSONSerialization.data(withJSONObject: [value]), let literal = String(data: escaped, encoding: .utf8) {
     config.userContentController.addUserScript(WKUserScript(source: "window.shiyeNativeNotes = \(literal)[0]", injectionTime: .atDocumentStart, forMainFrameOnly: true))
 }
-let bridge = NativeBridge(); config.userContentController.add(bridge, name: "setLanguage"); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
+#if SHIYE_CLOUD
+let cloudSession: LibrarySession
+ do {
+    let store = try CloudLibrary(directory: libraryURL().deletingLastPathComponent(), cloudEnabled: true)
+    cloudSession = try LibrarySession(store: store)
+    try cloudSession.configure(config.userContentController)
+    config.userContentController.add(SnapshotAcknowledgement(session: cloudSession), name: "snapshotPresented")
+ } catch { let alert = NSAlert(error: error); alert.runModal(); return }
+#endif
+let bridge = NativeBridge(); config.userContentController.add(bridge, name: "setLanguage"); config.userContentController.add(bridge, name: "setTheme"); config.userContentController.add(bridge, name: "fetchLinkMetadata"); config.userContentController.add(bridge, name: "persistLibrary"); config.userContentController.add(bridge, name: "saveBackup"); config.userContentController.add(bridge, name: "chooseBackupDirectory"); config.userContentController.add(bridge, name: "writeAutomaticBackup")
 let notesBridge = NotesBridge()
 config.userContentController.addScriptMessageHandler(notesBridge, contentWorld: .page, name: "persistNotes")
 let fileBridge = FileCollectionBridge()
 config.userContentController.addScriptMessageHandler(fileBridge, contentWorld: .page, name: "fileCollection")
+#if SHIYE_CLOUD
+bridge.session = cloudSession
+notesBridge.session = cloudSession
+fileBridge.session = cloudSession
+#endif
 let web = WKWebView(frame: .zero, configuration: config)
+#if SHIYE_CLOUD
+cloudSession.webView = web
+let cloudNavigation = CloudNavigation(session: cloudSession)
+web.navigationDelegate = cloudNavigation
+let cloudAppDelegate = CloudAppDelegate()
+app.delegate = cloudAppDelegate
+#endif
 let ui = UIDelegate(); web.uiDelegate = ui
 let delegate = WindowDelegate()
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760), styleMask: [.titled,.closable,.miniaturizable,.resizable], backing: .buffered, defer: false)
 window.identifier = NSUserInterfaceItemIdentifier("shiye-main"); window.title = nativeText("拾页"); window.minSize = NSSize(width: 720, height: 500); window.contentView = web; window.delegate = delegate; window.center(); window.makeKeyAndOrderFront(nil)
-if let url = Bundle.main.url(forResource: "index", withExtension: "html") { web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
+if let url = (Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "web") ?? Bundle.main.url(forResource: "index", withExtension: "html")) { web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
 app.activate(ignoringOtherApps: true); app.run()
 
  }

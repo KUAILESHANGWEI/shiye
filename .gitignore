@@ -6,3 +6,6 @@
 !package.json
 !Resources/NativeLocalizations.json
 .build/
+!Resources/Assets.xcassets/**/Contents.json
+
+!AppStore/metadata/*.json

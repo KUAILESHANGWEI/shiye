@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 APP="拾页.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -module-cache-path /private/tmp/shiyu-module-cache -target arm64-apple-macosx13.0 Sources/WebApp.swift Sources/BackupStore.swift Sources/FileCollectionStore.swift -o "$APP/Contents/MacOS/Shiyu"
-cp web/index.html web/files.js web/files.css web/locales.js web/i18n.js web/settings.js web/settings.css web/notes.js web/notes.css "$APP/Contents/Resources/"
+cp web/index.html web/files.js web/files.css web/locales.js web/i18n.js web/settings.js web/settings.css web/notes.js web/notes.css web/sync.js web/mobile.css web/global-search.js web/global-search.css web/privacy.html "$APP/Contents/Resources/"
 cp Resources/NativeLocalizations.json "$APP/Contents/Resources/"
 cp Resources/Shiye.icns "$APP/Contents/Resources/Shiye.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'

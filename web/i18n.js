@@ -1,9 +1,30 @@
 const shiyeEnglish = {
+    "全局搜索": "Global search",
+    "搜索全部收藏": "Search all collections",
+    "搜索分组、标题、网址、笔记或文件名": "Search groups, titles, URLs, notes or filenames",
+    "输入关键词，搜索所有收藏": "Enter a keyword to search all collections",
+    "找到 {count} 项结果": "Found {count} results",
+    "显示更多": "Show more",
+    "文件收藏暂时无法读取，其他收藏仍可搜索": "Files are temporarily unavailable. Other collections can still be searched.",
+    "分组": "Group",
+    "网站": "Website",
+    "数据与备份": "Data and backups",
+    "语言与外观": "Language and appearance",
+    "导入数据": "Import data",
+    "关于拾页": "About Shiye",
+    "隐私政策": "Privacy policy",
+    "查看": "View",
+        "外观": "Appearance",
+        "显示模式": "Display mode",
+        "白天模式": "Day mode",
+        "夜晚模式": "Night mode",
+        "无法保存显示设置，请检查存储权限。": "Unable to save display settings. Check storage permissions.",
+
     "Google Drive 同步文件夹 / 拾页备份": "Google Drive / Shiye Backups",
     "iCloud 云盘": "iCloud Drive",
     "iCloud 云盘 / 拾页备份": "iCloud Drive / Shiye Backups",
     "⇧  导入数据": "⇧  Import data",
-    "⇩  导出数据": "⇩  Export data",
+    "导出数据": "Export data",
     "⌕  搜索所有分组的网站": "⌕  Search websites in all groups",
     "◷  云盘备份": "◷  Cloud drive backup",
     "★ 已收藏": "★ Saved",
@@ -289,7 +310,15 @@ const shiyeEnglish = {
     "可按 ⌘V 粘贴图片": "Paste images with ⌘V",
     "请写入笔记或粘贴图片": "Write a note or paste an image",
     "无法粘贴此图片，请复制 PNG、JPEG 或 GIF 图片后重试。": "Could not paste this image. Copy a PNG, JPEG or GIF image and try again.",
-    "搜索网站名称、网址或备注": "Search website names, URLs or notes"
+    "搜索网站名称、网址或备注": "Search website names, URLs or notes",
+    "iCloud 同步": "iCloud sync",
+    "iCloud 正在连接": "Connecting to iCloud",
+    "iCloud 正在同步": "Syncing with iCloud",
+    "iCloud 已同步": "Synced with iCloud",
+    "iCloud 同步暂不可用，已保存在本机": "iCloud sync unavailable. Saved on this device.",
+    "请在系统设置中登录 iCloud": "Sign in to iCloud in system settings",
+    "本机保存": "Saved on this device",
+    "长按正文可粘贴图片": "Touch and hold the note to paste an image"
 };
 
 const ShiyeI18n = (() => {

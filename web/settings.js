@@ -1,3 +1,9 @@
+// Remove settings belonging to the retired AI organization feature.
+for (const key of ['shiye-ai-preferences-v1', 'shiye-ai-undo-v1',
+    ...['openai', 'grok', 'deepseek', 'gemini'].map(provider => 'shiye-ai-key-v1-' + provider)]) {
+    try { localStorage.removeItem(key); } catch {}
+}
+
 let changingPasswordKey;
 let changingPasswordRecord;
 let passwordChangePending = false;
@@ -88,6 +94,7 @@ for (const picker of document.querySelectorAll('[data-language-picker]')) {
             for (const other of document.querySelectorAll('[data-language-picker]')) other.value = picker.value;
             render();
             updateFileStorageStatus();
+            updateCloudStatus();
             if ($('lockScreen')) {
                 $('lockTitle').textContent = lockRecord ? t('欢迎回来') : t('设置开机密码');
                 $('lockHint').textContent = lockRecord ? t('请输入开机密码，打开你的收藏。') : t('首次使用，请设置打开拾页时使用的密码。');
@@ -103,3 +110,31 @@ window.addEventListener('shiye-language-changed', () => {
     render();
     updateFileStorageStatus();
 });
+
+function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $('settingsTheme').value = theme;
+    window.webkit?.messageHandlers?.setTheme?.postMessage(theme);
+}
+applyTheme(document.documentElement.dataset.theme === 'night' ? 'night' : 'day');
+$('settingsTheme').onchange = () => {
+    const previous = document.documentElement.dataset.theme;
+    const next = $('settingsTheme').value;
+    try {
+        localStorage.setItem('shiye-theme', next);
+        applyTheme(next);
+    } catch {
+        $('settingsTheme').value = previous;
+        alert(t('无法保存显示设置，请检查存储权限。'));
+    }
+};
+window.addEventListener('storage', event => {
+    if (event.key === 'shiye-theme') applyTheme(event.newValue === 'night' ? 'night' : 'day');
+});
+
+$('openPrivacy').onclick = () => {
+    const language = ShiyeI18n.locale().startsWith('zh') ? 'zh' : 'en';
+    $('privacyFrame').src = 'privacy.html?lang=' + language + '&embedded=1&theme=' + document.documentElement.dataset.theme;
+    $('privacyDialog').showModal();
+};
+$('closePrivacy').onclick = () => $('privacyDialog').close();
